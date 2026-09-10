@@ -26,10 +26,36 @@ export default function AuthGate({ children }) {
       setChecking(false)
       return
     }
-    return onAuthStateChanged(auth, current => {
-      setUser(current)
-      setChecking(false)
-    })
+
+    let finished = false
+    const timeout = window.setTimeout(() => {
+      if (!finished) {
+        console.warn('Firebase Auth demorou para responder; liberando a interface.')
+        setChecking(false)
+      }
+    }, 3000)
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      current => {
+        finished = true
+        window.clearTimeout(timeout)
+        setUser(current)
+        setChecking(false)
+      },
+      err => {
+        finished = true
+        window.clearTimeout(timeout)
+        console.error('Falha ao verificar sessão do Firebase:', err)
+        setChecking(false)
+      }
+    )
+
+    return () => {
+      finished = true
+      window.clearTimeout(timeout)
+      unsubscribe()
+    }
   }, [])
 
   if (!firebaseConfigured) {
