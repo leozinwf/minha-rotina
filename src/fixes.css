@@ -1,0 +1,71 @@
+/* Correções de robustez para timeline e drag-and-drop */
+
+/* Rápidos: o botão inteiro vira a superfície de arraste. */
+.v4-quickbar button[draggable="true"] {
+  cursor: grab !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-user-drag: element !important;
+  touch-action: none;
+}
+.v4-quickbar button[draggable="true"]:active { cursor: grabbing !important; }
+.v4-quickbar button[draggable="true"] > * { pointer-events: none !important; }
+
+/* Zonas de drop sempre ficam acima do conteúdo interno e mostram feedback. */
+.v4-dropday,
+.v4-month-cell {
+  position: relative;
+  isolation: isolate;
+}
+.v4-dropday.drag-over,
+.v4-month-cell.drag-over {
+  outline: 3px dashed #356CF1 !important;
+  outline-offset: -5px;
+  background: rgba(53,108,241,.09) !important;
+}
+
+/*
+ * Timeline: a versão anterior calculava left em px e width em %, o que podia
+ * ultrapassar a área útil. Forçamos 3 faixas horizontais estáveis. Assim,
+ * eventos que coincidem no tempo nunca ocupam a largura inteira um sobre o outro.
+ */
+.v4-day24 { overflow: hidden !important; }
+.v4-time-block {
+  box-sizing: border-box !important;
+  left: 62px !important;
+  width: calc((100% - 76px) / 3 - 5px) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  z-index: 3;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(255,255,255,.58);
+  box-shadow: 0 1px 3px rgba(20,25,22,.12);
+}
+/* Os 25 primeiros divs são as linhas de hora; a sequência seguinte são eventos. */
+.v4-day24 > .v4-time-block:nth-of-type(3n + 1) {
+  left: 62px !important;
+}
+.v4-day24 > .v4-time-block:nth-of-type(3n + 2) {
+  left: calc(62px + (100% - 76px) / 3) !important;
+}
+.v4-day24 > .v4-time-block:nth-of-type(3n) {
+  left: calc(62px + ((100% - 76px) / 3) * 2) !important;
+}
+
+/* Blocos muito curtos continuam legíveis. */
+.v4-time-block span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .v4-time-block {
+    left: 54px !important;
+    width: calc((100% - 66px) / 2 - 4px) !important;
+  }
+  .v4-day24 > .v4-time-block:nth-of-type(odd) { left: 54px !important; }
+  .v4-day24 > .v4-time-block:nth-of-type(even) { left: calc(54px + (100% - 66px) / 2) !important; }
+}
