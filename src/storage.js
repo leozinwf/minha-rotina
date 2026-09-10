@@ -58,32 +58,33 @@ function withTimeout(promise,label='firestore-timeout'){
   ])
 }
 
-export async function loadState(fallback){
+function syncFromFirestore(local){
+  const ref=userDoc()
+  if(!ref)return
+
+  void withTimeout(getDoc(ref),'firestore-read-timeout')
+    .then(snap=>{
+      if(snap?.exists?.()){
+        const remote=sanitizeState(snap.data()?.state,local)
+        writeLocal(remote)
+        return
+      }
+      return withTimeout(
+        setDoc(ref,{state:local,updatedAt:Date.now()},{merge:true}),
+        'firestore-first-write-timeout'
+      )
+    })
+    .catch(error=>console.warn('Sincronização inicial do Firestore falhou; app segue localmente.',error))
+}
+
+export function loadState(fallback){
   const safeFallback=sanitizeState(fallback,fallback)
   const local=readLocal(safeFallback)
 
-  try{
-    const ref=userDoc()
-    if(!ref)return local
-
-    const snap=await withTimeout(getDoc(ref),'firestore-read-timeout')
-    if(snap?.exists?.()){
-      const remote=sanitizeState(snap.data()?.state,local)
-      writeLocal(remote)
-      return remote
-    }
-
-    // Primeiro acesso: abre com dados locais/iniciais e cria o documento sem bloquear a UI.
-    void withTimeout(
-      setDoc(ref,{state:local,updatedAt:Date.now()},{merge:true}),
-      'firestore-first-write-timeout'
-    ).catch(error=>console.warn('Primeira sincronização do Firestore falhou.',error))
-
-    return local
-  }catch(error){
-    console.warn('Falha ao carregar Firestore; usando backup local.',error)
-    return local
-  }
+  // Nunca bloqueia a interface esperando o Firestore.
+  // O app abre imediatamente e a sincronização remota acontece em segundo plano.
+  queueMicrotask(()=>syncFromFirestore(local))
+  return Promise.resolve(local)
 }
 
 export async function saveState(state){
