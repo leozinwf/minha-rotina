@@ -1,7 +1,5 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import AppV5 from './AppV5'
-import './timeline-enhancer.css'
-import './timeline-enhancer'
+import AppV6 from './AppV6'
 
-createRoot(document.getElementById('root')).render(<React.StrictMode><AppV5 /></React.StrictMode>)
+createRoot(document.getElementById('root')).render(<React.StrictMode><AppV6 /></React.StrictMode>)
