@@ -2,21 +2,46 @@ const DB_NAME = 'minha-rotina-db'
 const STORE_NAME = 'state'
 const STATE_KEY = 'app-state'
 const AGENDA_MIGRATION_KEY = 'minha-rotina-agenda-sep-2026-installed'
+const FALLBACK_KEY = 'minha-rotina-v2'
+const DB_TIMEOUT_MS = 1500
+
+function withTimeout(promise, ms = DB_TIMEOUT_MS) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('IndexedDB timeout')), ms))
+  ])
+}
 
 function openDb() {
   return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB indisponível'))
+      return
+    }
+
     const request = indexedDB.open(DB_NAME, 1)
+
     request.onupgradeneeded = () => {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME)
     }
+
     request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
+    request.onerror = () => reject(request.error || new Error('Erro ao abrir IndexedDB'))
+    request.onblocked = () => reject(new Error('IndexedDB bloqueado por outra aba/conexão'))
   })
 }
 
+function safeLocalGet(key) {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+
+function safeLocalSet(key, value) {
+  try { localStorage.setItem(key, value) } catch {}
+}
+
 function mergeAgendaOnce(current, fallback) {
-  if (localStorage.getItem(AGENDA_MIGRATION_KEY)) return current
+  if (safeLocalGet(AGENDA_MIGRATION_KEY)) return current
 
   const routines = [...(current?.routines || [])]
   for (const routine of fallback.routines || []) {
@@ -28,7 +53,8 @@ function mergeAgendaOnce(current, fallback) {
     if (!tasks.some(item => item.title === task.title && item.date === task.date)) tasks.push(task)
   }
 
-  localStorage.setItem(AGENDA_MIGRATION_KEY, '1')
+  safeLocalSet(AGENDA_MIGRATION_KEY, '1')
+
   return {
     ...fallback,
     ...current,
@@ -39,52 +65,66 @@ function mergeAgendaOnce(current, fallback) {
   }
 }
 
+function loadLocalFallback(fallback) {
+  try {
+    const saved = safeLocalGet(FALLBACK_KEY) || safeLocalGet('minha-rotina-v1')
+    if (!saved) return fallback
+    return mergeAgendaOnce({ ...fallback, ...JSON.parse(saved) }, fallback)
+  } catch {
+    return fallback
+  }
+}
+
 export async function loadState(fallback) {
   try {
-    const db = await openDb()
-    const value = await new Promise((resolve, reject) => {
+    const db = await withTimeout(openDb())
+
+    const value = await withTimeout(new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly')
       const request = tx.objectStore(STORE_NAME).get(STATE_KEY)
       request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
+      request.onerror = () => reject(request.error || new Error('Erro ao ler IndexedDB'))
+      tx.onabort = () => reject(tx.error || new Error('Leitura IndexedDB abortada'))
+    }))
+
     db.close()
 
     if (value) {
       const merged = mergeAgendaOnce(value, fallback)
-      await saveState(merged)
+      safeLocalSet(FALLBACK_KEY, JSON.stringify(merged))
       return merged
     }
 
-    const legacy = localStorage.getItem('minha-rotina-v1')
-    if (legacy) {
-      const parsed = JSON.parse(legacy)
-      const migrated = mergeAgendaOnce({ ...fallback, ...parsed, version: 2 }, fallback)
-      await saveState(migrated)
-      return migrated
-    }
+    const local = loadLocalFallback(fallback)
+    safeLocalSet(AGENDA_MIGRATION_KEY, '1')
+    safeLocalSet(FALLBACK_KEY, JSON.stringify(local))
 
-    localStorage.setItem(AGENDA_MIGRATION_KEY, '1')
-    await saveState(fallback)
-    return fallback
-  } catch {
-    const legacy = localStorage.getItem('minha-rotina-v2')
-    const parsed = legacy ? JSON.parse(legacy) : fallback
-    return mergeAgendaOnce(parsed, fallback)
+    // Não bloqueia a abertura da aplicação esperando a persistência no IndexedDB.
+    saveState(local)
+    return local
+  } catch (error) {
+    console.warn('[Minha Rotina] IndexedDB indisponível; usando armazenamento local.', error)
+    return loadLocalFallback(fallback)
   }
 }
 
 export async function saveState(state) {
+  // Mantém sempre uma cópia local rápida para recuperação.
+  safeLocalSet(FALLBACK_KEY, JSON.stringify(state))
+
   try {
-    const db = await openDb()
-    await new Promise((resolve, reject) => {
+    const db = await withTimeout(openDb())
+
+    await withTimeout(new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite')
       tx.objectStore(STORE_NAME).put(state, STATE_KEY)
       tx.oncomplete = resolve
-      tx.onerror = () => reject(tx.error)
-    })
+      tx.onerror = () => reject(tx.error || new Error('Erro ao salvar IndexedDB'))
+      tx.onabort = () => reject(tx.error || new Error('Gravação IndexedDB abortada'))
+    }))
+
     db.close()
-  } catch {
-    localStorage.setItem('minha-rotina-v2', JSON.stringify(state))
+  } catch (error) {
+    console.warn('[Minha Rotina] Salvamento no IndexedDB falhou; cópia local preservada.', error)
   }
 }
