@@ -1,3 +1,16 @@
+function todayKey(){
+  const d=new Date()
+  return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')
+}
+
+function applyTodayDropTargets(){
+  const key=todayKey()
+  const timeline=document.querySelector('.v6-timeline-scroll')
+  const agenda=document.querySelector('.v6-agenda-list')
+  if(timeline)timeline.dataset.dropDate=key
+  if(agenda)agenda.dataset.dropDate=key
+}
+
 function updateMarker(timeline) {
   const now = new Date()
   const minutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60
@@ -26,6 +39,7 @@ export function scrollTimelineToCurrentTime(root = document) {
   const y = (minutes / 1440) * timeline.scrollHeight
   scroll.scrollTop = Math.max(0, y - scroll.clientHeight * 0.32)
   updateMarker(timeline)
+  applyTodayDropTargets()
   return true
 }
 
@@ -33,6 +47,7 @@ export function enableTimelineCurrentTime() {
   let lastTimeline = null
 
   const update = () => {
+    applyTodayDropTargets()
     const scroll = document.querySelector('.v6-timeline-scroll')
     const timeline = scroll?.querySelector('.v6-day24')
     if (!timeline) {
@@ -49,8 +64,7 @@ export function enableTimelineCurrentTime() {
     updateMarker(timeline)
   }
 
-  // Não observar o DOM inteiro: isso pode gerar um loop de mutações durante a troca de telas.
   update()
-  const timer = window.setInterval(update, 15000)
+  const timer = window.setInterval(update, 1500)
   return () => window.clearInterval(timer)
 }
