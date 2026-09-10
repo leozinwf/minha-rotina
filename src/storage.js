@@ -5,20 +5,44 @@ const LOCAL_KEY='minha-rotina-firestore-backup'
 const LEGACY_KEYS=['minha-rotina-v2','minha-rotina-v1']
 const TIMEOUT_MS=3500
 
+function isObject(value){
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function sanitizeState(value,fallback){
+  if(!isObject(value)) return fallback
+  return {
+    ...fallback,
+    ...value,
+    routines:Array.isArray(value.routines)?value.routines:(fallback.routines||[]),
+    tasks:Array.isArray(value.tasks)?value.tasks:(fallback.tasks||[]),
+    priorities:isObject(value.priorities)?value.priorities:(fallback.priorities||{}),
+    completions:isObject(value.completions)?value.completions:(fallback.completions||{}),
+    notes:Array.isArray(value.notes)?value.notes:(fallback.notes||[]),
+    noteCategories:Array.isArray(value.noteCategories)?value.noteCategories:(fallback.noteCategories||[]),
+    quickTemplates:Array.isArray(value.quickTemplates)?value.quickTemplates:(fallback.quickTemplates||[]),
+    yearPlans:isObject(value.yearPlans)?value.yearPlans:(fallback.yearPlans||{})
+  }
+}
+
 function readLocal(fallback){
   try{
     const direct=localStorage.getItem(LOCAL_KEY)
-    if(direct)return JSON.parse(direct)
+    if(direct)return sanitizeState(JSON.parse(direct),fallback)
     for(const key of LEGACY_KEYS){
       const value=localStorage.getItem(key)
-      if(value)return JSON.parse(value)
+      if(value)return sanitizeState(JSON.parse(value),fallback)
     }
-  }catch{}
+  }catch(error){
+    console.warn('Backup local inválido; usando estado inicial.',error)
+  }
   return fallback
 }
 
 function writeLocal(state){
-  try{localStorage.setItem(LOCAL_KEY,JSON.stringify(state))}catch{}
+  try{localStorage.setItem(LOCAL_KEY,JSON.stringify(state))}catch(error){
+    console.warn('Não foi possível gravar backup local.',error)
+  }
 }
 
 function userDoc(){
@@ -29,41 +53,49 @@ function userDoc(){
 
 function withTimeout(promise,label='firestore-timeout'){
   return Promise.race([
-    promise,
+    Promise.resolve(promise),
     new Promise((_,reject)=>setTimeout(()=>reject(new Error(label)),TIMEOUT_MS))
   ])
 }
 
 export async function loadState(fallback){
-  const local=readLocal(fallback)
-  const ref=userDoc()
-  if(!ref)return local
+  const safeFallback=sanitizeState(fallback,fallback)
+  const local=readLocal(safeFallback)
 
   try{
+    const ref=userDoc()
+    if(!ref)return local
+
     const snap=await withTimeout(getDoc(ref),'firestore-read-timeout')
-    if(snap.exists()){
-      const remote=snap.data()?.state||local
+    if(snap?.exists?.()){
+      const remote=sanitizeState(snap.data()?.state,local)
       writeLocal(remote)
       return remote
     }
 
-    // Primeiro acesso: o app deve abrir imediatamente com o estado local.
-    // A criação do documento remoto acontece em segundo plano e nunca bloqueia a UI.
-    withTimeout(setDoc(ref,{state:local,updatedAt:Date.now()},{merge:true}),'firestore-first-write-timeout')
-      .catch(error=>console.warn('Primeira sincronização do Firestore falhou; app continuará localmente.',error))
+    // Primeiro acesso: abre com dados locais/iniciais e cria o documento sem bloquear a UI.
+    void withTimeout(
+      setDoc(ref,{state:local,updatedAt:Date.now()},{merge:true}),
+      'firestore-first-write-timeout'
+    ).catch(error=>console.warn('Primeira sincronização do Firestore falhou.',error))
+
     return local
   }catch(error){
-    console.warn('Firestore indisponível; usando backup local.',error)
+    console.warn('Falha ao carregar Firestore; usando backup local.',error)
     return local
   }
 }
 
 export async function saveState(state){
-  writeLocal(state)
-  const ref=userDoc()
-  if(!ref)return
+  const safe=isObject(state)?state:{}
+  writeLocal(safe)
   try{
-    await withTimeout(setDoc(ref,{state,updatedAt:Date.now()},{merge:true}),'firestore-write-timeout')
+    const ref=userDoc()
+    if(!ref)return
+    await withTimeout(
+      setDoc(ref,{state:safe,updatedAt:Date.now()},{merge:true}),
+      'firestore-write-timeout'
+    )
   }catch(error){
     console.warn('Não foi possível sincronizar com o Firestore; backup local mantido.',error)
   }
